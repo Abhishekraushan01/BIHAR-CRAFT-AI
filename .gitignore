@@ -1,0 +1,38 @@
+# Python & Environment
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+venv/
+.venv/
+env/
+ENV/
+
+# Virtual environments
+venv/
+.venv/
+
+# Dataset and outputs (optional)
+data/raw/
+data/processed/
+data/augmented/
+models/
+outputs/
+
+# IDE / Editor
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# PyTorch checkpoints
+*.pth
+*.pt
+
+# Notebook checkpoints
+.ipynb_checkpoints/

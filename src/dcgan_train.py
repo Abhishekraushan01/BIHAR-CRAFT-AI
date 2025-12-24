@@ -6,23 +6,48 @@ import torchvision.utils as vutils
 from data_utils import get_dataset
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("Using device:", device)
+if device.type == "cuda":
+    print("GPU:", torch.cuda.get_device_name(0))
 
-# --- Define Generator
+
 class Generator(nn.Module):
     def __init__(self, nz=100, ngf=64, nc=3):
         super().__init__()
         self.main = nn.Sequential(
-            nn.ConvTranspose2d(nz, ngf*8, 4, 1, 0, bias=False),
-            nn.BatchNorm2d(ngf*8),
+            # input noise z of shape (nz, 1, 1)
+            nn.ConvTranspose2d(nz, ngf * 16, 4, 1, 0, bias=False),
+            nn.BatchNorm2d(ngf * 16),
             nn.ReLU(True),
-            nn.ConvTranspose2d(ngf*8, ngf*4, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(ngf*4),
+
+            # now (ngf*16) x 4 x 4
+            nn.ConvTranspose2d(ngf * 16, ngf * 8, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ngf * 8),
             nn.ReLU(True),
-            nn.ConvTranspose2d(ngf*4, ngf*2, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(ngf*2),
+
+            # now (ngf*8) x 8 x 8
+            nn.ConvTranspose2d(ngf * 8, ngf * 4, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ngf * 4),
             nn.ReLU(True),
-            nn.ConvTranspose2d(ngf*2, nc, 4, 2, 1, bias=False),
-            nn.Tanh()
+
+            # now (ngf*4) x 16 x 16
+            nn.ConvTranspose2d(ngf * 4, ngf * 2, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ngf * 2),
+            nn.ReLU(True),
+
+            # now (ngf*2) x 32 x 32
+            nn.ConvTranspose2d(ngf * 2, ngf, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ngf),
+            nn.ReLU(True),
+
+            # now (ngf) x 64 x 64
+            nn.ConvTranspose2d(ngf, ngf // 2, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ngf // 2),
+            nn.ReLU(True),
+
+            # now (ngf//2) x 128 x 128
+            nn.ConvTranspose2d(ngf // 2, nc, 4, 2, 1, bias=False),
+            nn.Tanh()  # output in [-1, 1] range
         )
 
     def forward(self, input):
@@ -60,13 +85,14 @@ def main():
     # Project directory base
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    # Dataset path
-    processed_data_path = os.path.join(BASE_DIR, "data", "processed")
+    # Paths to folders relative to BASE_DIR
+    dataset_folders = ["data/processed", "data/augmented"]
 
-    print("Loading images from:", processed_data_path)
+    print("Loading images from:", dataset_folders)
 
-    # Load dataset — set num_workers to 0 on Windows if you run into multiprocessing errors
-    dataloader = get_dataset(processed_data_path)
+    # Use your updated get_dataset → it accepts a list of folders
+    dataloader = get_dataset(dataset_folders, img_size=256, batch_size=64, shuffle=True)
+
 
     # Build networks
     netG = Generator().to(device)
@@ -74,36 +100,42 @@ def main():
 
     # Loss & optimizers
     criterion = nn.BCELoss()
-    optimizerD = optim.Adam(netD.parameters(), lr=0.0002, betas=(0.5, 0.999))
+    optimizerD = optim.Adam(netD.parameters(), lr=0.0001, betas=(0.5, 0.999))
     optimizerG = optim.Adam(netG.parameters(), lr=0.0002, betas=(0.5, 0.999))
 
     # Training loop
     nz = 100
-    epochs = 50
+    epochs = 300
     for epoch in range(epochs):
         for i, real_images in enumerate(dataloader, 0):
             real_images = real_images.to(device)
             batch_size = real_images.size(0)
 
-            # Train Discriminator
-            netD.zero_grad()
-            label = torch.full((batch_size,), 1, dtype=torch.float, device=device)
-            errD_real = criterion(netD(real_images).view(-1), label)
-            errD_real.backward()
+        # Train Discriminator on real
+        netD.zero_grad()
+        label = torch.full((batch_size,), 1, dtype=torch.float, device=device)
+        output_real = netD(real_images).view(-1)
+        errD_real = criterion(output_real, label)
+        errD_real.backward()
 
-            noise = torch.randn(batch_size, nz, 1, 1, device=device)
-            fake_images = netG(noise)
-            label.fill_(0)
-            errD_fake = criterion(netD(fake_images.detach()).view(-1), label)
-            errD_fake.backward()
-            optimizerD.step()
+        # Train Discriminator on fake
+        noise = torch.randn(batch_size, nz, 1, 1, device=device)
+        fake_images = netG(noise)
 
-            # Train Generator
-            netG.zero_grad()
-            label.fill_(1)
-            errG = criterion(netD(fake_images).view(-1), label)
-            errG.backward()
-            optimizerG.step()
+        label.fill_(0)
+        output_fake_for_D = netD(fake_images.detach()).view(-1)  # new forward pass for D
+        errD_fake = criterion(output_fake_for_D, label)
+        errD_fake.backward()
+        optimizerD.step()
+
+        # Train Generator
+        netG.zero_grad()
+
+        label.fill_(1)
+        output_fake_for_G = netD(fake_images).view(-1)      # fresh forward pass for D
+        errG = criterion(output_fake_for_G, label)
+        errG.backward()
+        optimizerG.step()
 
         print(f"Epoch [{epoch+1}/{epochs}] LossD: {errD_real+errD_fake:.4f}, LossG: {errG:.4f}")
 

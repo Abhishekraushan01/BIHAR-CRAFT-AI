@@ -13,7 +13,10 @@ venv/
 .venv/
 
 # Dataset and outputs (optional)
-/
+data/processed/
+data/augmented/
+models/
+outputs/
 
 # IDE / Editor
 .vscode/

@@ -1,4 +1,5 @@
 import os
+import pickle
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -103,51 +104,118 @@ def main():
     optimizerD = optim.Adam(netD.parameters(), lr=0.0001, betas=(0.5, 0.999))
     optimizerG = optim.Adam(netG.parameters(), lr=0.0002, betas=(0.5, 0.999))
 
-    # Training loop
+    G_losses = []
+    D_losses = []
+
     nz = 100
-    epochs = 300
-    for epoch in range(epochs):
+    epochs = 100
+    fixed_noise = torch.randn(64, nz, 1, 1, device=device)
+
+    os.makedirs(os.path.join(BASE_DIR, "outputs/dcgan_samples"), exist_ok=True)
+    os.makedirs(os.path.join(BASE_DIR, "models"), exist_ok=True)
+
+    # ===== Resume from checkpoint (if exists) =====
+    start_epoch = 0
+    resume_path = os.path.join(BASE_DIR, "models", "dcgan_epoch_10.pth")  # change to your checkpoint
+    if os.path.exists(resume_path):
+        checkpoint = torch.load(resume_path, map_location=device)
+        netG.load_state_dict(checkpoint["netG"])
+        netD.load_state_dict(checkpoint["netD"])
+        optimizerG.load_state_dict(checkpoint["optimizerG"])
+        optimizerD.load_state_dict(checkpoint["optimizerD"])
+        start_epoch = checkpoint["epoch"]
+        print(f"Resuming training from epoch {start_epoch}")
+    
+    # Training loop
+    for epoch in range(start_epoch, epochs):
         for i, real_images in enumerate(dataloader, 0):
             real_images = real_images.to(device)
             batch_size = real_images.size(0)
 
-        # Train Discriminator on real
-        netD.zero_grad()
-        label = torch.full((batch_size,), 1, dtype=torch.float, device=device)
-        output_real = netD(real_images).view(-1)
-        errD_real = criterion(output_real, label)
-        errD_real.backward()
+            # Train Discriminator on real
+            netD.zero_grad()
+            label = torch.full((batch_size,), 1, dtype=torch.float, device=device)
+            output_real = netD(real_images).view(-1)
+            errD_real = criterion(output_real, label)
+            errD_real.backward()
 
-        # Train Discriminator on fake
-        noise = torch.randn(batch_size, nz, 1, 1, device=device)
-        fake_images = netG(noise)
+            # Train Discriminator on fake
+            noise = torch.randn(batch_size, nz, 1, 1, device=device)
+            fake_images = netG(noise)
 
-        label.fill_(0)
-        output_fake_for_D = netD(fake_images.detach()).view(-1)  # new forward pass for D
-        errD_fake = criterion(output_fake_for_D, label)
-        errD_fake.backward()
-        optimizerD.step()
+            label.fill_(0)
+            output_fake_for_D = netD(fake_images.detach()).view(-1)  # new forward pass for D
+            errD_fake = criterion(output_fake_for_D, label)
+            errD_fake.backward()
+            errD = errD_real + errD_fake
 
-        # Train Generator
-        netG.zero_grad()
+            optimizerD.step()
 
-        label.fill_(1)
-        output_fake_for_G = netD(fake_images).view(-1)      # fresh forward pass for D
-        errG = criterion(output_fake_for_G, label)
-        errG.backward()
-        optimizerG.step()
+            # Train Generator
+            netG.zero_grad()
 
-        print(f"Epoch [{epoch+1}/{epochs}] LossD: {errD_real+errD_fake:.4f}, LossG: {errG:.4f}")
+            label.fill_(1)
+            output_fake_for_G = netD(fake_images).view(-1)      # fresh forward pass for D
+            errG = criterion(output_fake_for_G, label)
+            errG.backward()
+            optimizerG.step()
+
+            if i % 200 == 0:
+                print(
+                    f"Epoch [{epoch+1}/{epochs}] "
+                    f"Batch [{i}/{len(dataloader)}] "
+                    f"LossD: {errD.item():.4f} "
+                    f"LossG: {errG.item():.4f}"
+                )
+
+            D_losses.append((errD_real + errD_fake).item())
+            G_losses.append(errG.item())
 
         # Save progress images
-        vutils.save_image(
-            fake_images,
-            os.path.join(BASE_DIR, "outputs", "dcgan_samples", f"epoch_{epoch+1}.png"),
-            normalize=True
-        )
+        with torch.no_grad():
+            fake = netG(fixed_noise)
+            vutils.save_image(
+             fake,
+             os.path.join(BASE_DIR, "outputs", "dcgan_samples", f"epoch_{epoch+1}.png"),
+             normalize=True
+         )
+        # Save losses
+        loss_path = os.path.join(BASE_DIR, "outputs", "training_losses.pkl")
+        with open(loss_path, "wb") as f:
+            pickle.dump(
+                {
+                    "D_losses": D_losses,
+                    "G_losses": G_losses,
+                },
+                f
+            )
 
-    # Save final model
-    torch.save(netG.state_dict(), os.path.join(BASE_DIR, "models", "dcgan.pth"))
+
+        # ===== Save checkpoint every 10 epochs =====
+        if (epoch + 1) % 10 == 0:
+            torch.save(
+                {
+                    "epoch": epoch + 1,
+                    "netG": netG.state_dict(),
+                    "netD": netD.state_dict(),
+                    "optimizerG": optimizerG.state_dict(),
+                    "optimizerD": optimizerD.state_dict(),
+                },
+                os.path.join(BASE_DIR, "models", f"dcgan_epoch_{epoch+1}.pth")
+            )
+
+
+    # ===== Final save AFTER training =====
+    torch.save(
+        {
+            "epoch": epochs,
+            "netG": netG.state_dict(),
+            "netD": netD.state_dict(),
+            "optimizerG": optimizerG.state_dict(),
+            "optimizerD": optimizerD.state_dict(),
+        },
+        os.path.join(BASE_DIR, "models", "dcgan_final.pth")
+    )
     print("Training complete. Model saved.")
 
 if __name__ == "__main__":

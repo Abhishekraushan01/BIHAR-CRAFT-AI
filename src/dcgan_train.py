@@ -70,11 +70,14 @@ class Discriminator(nn.Module):
             nn.Conv2d(ndf*4, ndf*8, 4, 2, 1, bias=False),
             nn.BatchNorm2d(ndf*8),
             nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(ndf*8, ndf*16, 4, 2, 1, bias=False), # 16->8
+            nn.BatchNorm2d(ndf*16),
+            nn.LeakyReLU(0.2, inplace=True),
         )
         
         self.classifier = nn.Sequential(
             nn.Flatten(),                      # flatten to [batch_size, ...]
-            nn.Linear(ndf*8 * 16 * 16, 1),     # adapt 16*16 if your input image is 256×256
+            nn.Linear(ndf*16 * 8 * 8, 1),     # adapt 16*16 if your input image is 256×256
             nn.Sigmoid()                       # single probability per image
         )
 

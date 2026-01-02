@@ -14,7 +14,8 @@ print("Loading model from:", model_path)
 
 # Load generator
 netG = Generator()
-netG.load_state_dict(torch.load(model_path, map_location=device))
+checkpoint = torch.load(model_path, map_location=device)
+netG.load_state_dict(checkpoint["netG"])
 netG.to(device)
 netG.eval()
 
